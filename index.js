@@ -1,5 +1,5 @@
 const cluster = require('cluster');
-const YAML = require('yamljs');
+const ConfigLoader = require('./lib/utils/config-loader');
 const pkg = require('./package.json');
 const { Command } = require('commander');
 const { startWorker } = require('./lib/worker');
@@ -16,6 +16,8 @@ const transportArr = [
     })
 ];
 
+const MEMORY_THRESHOLD = 0.90; // 90%
+
 let numCPUs = require("os").availableParallelism();
 
 const program = new Command();
@@ -26,7 +28,13 @@ program
     .option('-c, --config [p]', 'The yaml file for config', 'config/config.yaml');
 program.parse(process.argv);
 const options = program.opts();
-const configObject = YAML.load(options.config);
+if (process.env.SIGNAL_CONFIG_YAML) {
+    options.config = process.env.SIGNAL_CONFIG_YAML;
+}
+const configLoader = new ConfigLoader()
+    .loadFromYaml(options.config)
+    .loadFromEnv('SIGNAL_');
+const configObject = configLoader.config;
 mergeENV(configObject);
 cluster.schedulingPolicy = cluster.SCHED_RR;
 if (configObject.log?.writers === 'file') {
@@ -51,6 +59,15 @@ const logger = createLogger({
     level: configObject.log?.logger_level.toLowerCase() ?? 'warn',
     transports: transportArr,
 });
+
+setInterval(() => {
+    const { heapUsed, heapTotal } = process.memoryUsage();
+    const ratio = heapUsed / heapTotal;
+    if (ratio > MEMORY_THRESHOLD) {
+        logger.warn(`Memory usage high: ${(ratio * 100).toFixed(2)}%，gc`);
+        if (global.gc) global.gc();
+    }
+}, 30000);
 
 if (cluster.isPrimary) {
     masterProc();
@@ -139,6 +156,7 @@ function setupWorker(worker) {
         }
     }, 5000);
     worker.on('exit', (code, signal) => {
+        logger.error(`worker exit, code ${code} signal ${signal}`)
         clearInterval(timer);
     })
     worker.on('message', (msg) => {

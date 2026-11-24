@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:24-slim
 
 #RUN npm install pm2 -g
 WORKDIR /cbsignal_uws
@@ -6,6 +6,8 @@ WORKDIR /cbsignal_uws
 
 COPY . /cbsignal_uws/
 RUN yarn install
+
+ENV NODE_OPTIONS="--expose-gc"
 
 CMD [ "node", "index.js", "config.yaml"]
 
